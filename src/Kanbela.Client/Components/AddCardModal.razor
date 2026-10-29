@@ -1,0 +1,129 @@
+@using System.ComponentModel.DataAnnotations
+
+<div class="modal-backdrop" @onclick="HandleBackdropClick">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="add-card-title" @onclick:stopPropagation="true">
+        <header class="modal-header">
+            <div>
+                <h2 id="add-card-title">Nueva tarjeta</h2>
+                <p>Añádela a la columna que prefieras.</p>
+            </div>
+            <button type="button" class="icon-btn" @onclick="() => OnClose.InvokeAsync()" aria-label="Cerrar">
+                ×
+            </button>
+        </header>
+
+        <EditForm Model="_model" OnValidSubmit="SubmitAsync">
+            <DataAnnotationsValidator />
+
+            <div class="field">
+                <label for="card-title">Título</label>
+                <InputText id="card-title"
+                           @bind-Value="_model.Title"
+                           maxlength="200"
+                           placeholder="¿Qué hay que hacer?"
+                           disabled="@Saving" />
+                <ValidationMessage For="() => _model.Title" />
+            </div>
+
+            <div class="field">
+                <label for="card-description">
+                    Descripción <span class="optional">(opcional)</span>
+                </label>
+                <InputTextArea id="card-description"
+                               @bind-Value="_model.Description"
+                               maxlength="2000"
+                               rows="3"
+                               placeholder="Añade contexto o criterios de aceptación…"
+                               disabled="@Saving" />
+                <ValidationMessage For="() => _model.Description" />
+            </div>
+
+            <div class="field">
+                <label for="card-column">Columna</label>
+                <InputSelect id="card-column" @bind-Value="_model.ColumnId" disabled="@Saving">
+                    @foreach (var column in Columns)
+                    {
+                        <option value="@column.Id">@column.Name</option>
+                    }
+                </InputSelect>
+                <ValidationMessage For="() => _model.ColumnId" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="form-error" role="alert">@ErrorMessage</div>
+            }
+
+            <footer class="modal-footer">
+                <button type="button" class="btn btn-ghost" @onclick="() => OnClose.InvokeAsync()" disabled="@Saving">
+                    Cancelar
+                </button>
+                <button type="submit" class="btn btn-primary" disabled="@Saving">
+                    @(Saving ? "Creando…" : "Crear tarjeta")
+                </button>
+            </footer>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ColumnDto> Columns { get; set; } = [];
+
+    [Parameter]
+    public Guid InitialColumnId { get; set; }
+
+    [Parameter]
+    public bool Saving { get; set; }
+
+    [Parameter]
+    public string? ErrorMessage { get; set; }
+
+    [Parameter]
+    public EventCallback<CreateCardInput> OnSubmit { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private readonly CreateCardFormModel _model = new();
+
+    protected override void OnInitialized()
+    {
+        _model.ColumnId = InitialColumnId != Guid.Empty
+            ? InitialColumnId
+            : Columns.FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (Saving)
+        {
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new CreateCardInput(
+            _model.ColumnId,
+            _model.Title.Trim(),
+            _model.Description));
+    }
+
+    private async Task HandleBackdropClick()
+    {
+        if (!Saving)
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+
+    private sealed class CreateCardFormModel
+    {
+        public Guid ColumnId { get; set; }
+
+        [Required(ErrorMessage = "El título es obligatorio.")]
+        [StringLength(200, ErrorMessage = "El título no puede superar los 200 caracteres.")]
+        public string Title { get; set; } = string.Empty;
+
+        [StringLength(2000, ErrorMessage = "La descripción no puede superar los 2000 caracteres.")]
+        public string? Description { get; set; }
+    }
+}

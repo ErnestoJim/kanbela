@@ -1,0 +1,455 @@
+@page "/board/{BoardId:guid}"
+@implements IAsyncDisposable
+@inject BoardApiClient Api
+@inject BoardHubClient Hub
+
+<PageTitle>@(_board is null ? "Tablero" : $"{_board.Title} · Kanbela")</PageTitle>
+
+@if (_loading)
+{
+    <section class="board-loading">
+        <span class="spinner"></span>
+        <p>Cargando el tablero…</p>
+    </section>
+}
+else if (_loadError is not null)
+{
+    <section class="state-panel">
+        <span class="state-icon">!</span>
+        <h1>No se pudo abrir el tablero</h1>
+        <p>@_loadError</p>
+        <div class="state-actions">
+            <button class="btn btn-primary" @onclick="ReloadAsync">Reintentar</button>
+            <a class="btn btn-ghost" href="">Volver al inicio</a>
+        </div>
+    </section>
+}
+else if (_board is not null)
+{
+    <section class="board-page">
+        <header class="board-header">
+            <div class="board-title-block">
+                <a class="back-link" href="">← Tableros</a>
+                <h1>@_board.Title</h1>
+                <p class="board-meta">
+                    @TotalCards tarjeta@(TotalCards == 1 ? "" : "s")
+                    <span class="meta-separator">·</span>
+                    @_board.Columns.Count columnas
+                    <span class="meta-separator">·</span>
+                    Arrastra para reorganizar
+                </p>
+            </div>
+
+            <div class="board-actions">
+                @if (_hubConnected)
+                {
+                    <span class="status-pill status-online" title="Los cambios de otros usuarios llegan al instante">
+                        <span class="pulse-dot"></span>
+                        En tiempo real
+                    </span>
+                }
+                else
+                {
+                    <button class="status-pill status-offline" @onclick="ConnectHubAsync"
+                            title="Reintentar la conexión en tiempo real">
+                        <span class="dot"></span>
+                        @_hubStatus · Reintentar
+                    </button>
+                }
+
+                <button class="btn btn-primary" @onclick="() => OpenAddCard()">
+                    <span class="btn-plus">+</span> Nueva tarjeta
+                </button>
+            </div>
+        </header>
+
+        <div class="board-canvas">
+            <div class="board-columns">
+                @foreach (var column in _board.Columns)
+                {
+                    <BoardColumnView @key="column.Id"
+                                     Column="column"
+                                     DraggedCardId="_draggedCardId"
+                                     IsDragging="_isDragging"
+                                     OnCardDragStart="HandleCardDragStart"
+                                     OnCardDragEnd="HandleCardDragEnd"
+                                     OnDropOnColumn="HandleDropOnColumn"
+                                     OnAddCard="OpenAddCardForColumn" />
+                }
+            </div>
+        </div>
+
+        @if (_toast is not null)
+        {
+            <div class="toast" role="alert">
+                <span>@_toast</span>
+                <button class="toast-close" @onclick="() => _toast = null" aria-label="Cerrar aviso">×</button>
+            </div>
+        }
+    </section>
+
+    @if (_modalOpen)
+    {
+        <AddCardModal Columns="_board.Columns"
+                      InitialColumnId="_modalInitialColumnId"
+                      Saving="_savingCard"
+                      ErrorMessage="@_modalError"
+                      OnSubmit="SubmitNewCardAsync"
+                      OnClose="CloseModal" />
+    }
+}
+
+@code {
+    [Parameter]
+    public Guid BoardId { get; set; }
+
+    private BoardDto? _board;
+    private bool _loading = true;
+    private string? _loadError;
+    private string? _toast;
+
+    private Guid? _draggedCardId;
+    private bool _isDragging;
+
+    private bool _modalOpen;
+    private Guid _modalInitialColumnId;
+    private bool _savingCard;
+    private string? _modalError;
+
+    private bool _hubConnected;
+    private string _hubStatus = "Conectando…";
+
+    private int TotalCards => _board?.Columns.Sum(column => column.Cards.Count) ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.BoardUpdated += HandleBoardUpdatedAsync;
+        Hub.Reconnected += HandleHubReconnectedAsync;
+        Hub.ConnectionClosed += HandleHubConnectionClosed;
+
+        await LoadBoardAsync();
+
+        if (_board is not null)
+        {
+            await ConnectHubAsync();
+        }
+    }
+
+    private async Task LoadBoardAsync()
+    {
+        _loading = true;
+        _loadError = null;
+
+        try
+        {
+            _board = await Api.GetBoardAsync(BoardId);
+
+            if (_board is null)
+            {
+                _loadError = $"No existe un tablero con el identificador {BoardId}.";
+            }
+        }
+        catch (Exception exception)
+        {
+            _loadError = exception.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadBoardAsync();
+
+        if (_board is not null && !_hubConnected)
+        {
+            await ConnectHubAsync();
+        }
+    }
+
+    private async Task RefreshBoardSilentlyAsync()
+    {
+        try
+        {
+            var board = await Api.GetBoardAsync(BoardId);
+            if (board is not null)
+            {
+                _board = board;
+                _loadError = null;
+            }
+        }
+        catch (Exception exception)
+        {
+            _toast = $"No se pudo sincronizar el tablero: {exception.Message}";
+        }
+    }
+
+    private async Task ConnectHubAsync()
+    {
+        _hubStatus = "Conectando…";
+        StateHasChanged();
+
+        try
+        {
+            await Hub.ConnectAsync(BoardId);
+            _hubConnected = true;
+            _hubStatus = "En tiempo real";
+        }
+        catch (Exception exception)
+        {
+            _hubConnected = false;
+            _hubStatus = "Sin tiempo real";
+            _toast = $"No se pudo conectar a SignalR. Las tarjetas se moverán vía REST. Detalle: {exception.Message}";
+        }
+
+        StateHasChanged();
+    }
+
+    private Task HandleBoardUpdatedAsync(BoardDto board)
+    {
+        return InvokeAsync(() =>
+        {
+            if (board.Id != BoardId)
+            {
+                return;
+            }
+
+            _board = board;
+            StateHasChanged();
+        });
+    }
+
+    private async Task HandleHubReconnectedAsync()
+    {
+        await InvokeAsync(async () =>
+        {
+            _hubConnected = true;
+            _hubStatus = "En tiempo real";
+            await RefreshBoardSilentlyAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void HandleHubConnectionClosed(Exception? exception)
+    {
+        _ = InvokeAsync(() =>
+        {
+            _hubConnected = false;
+            _hubStatus = "Sin tiempo real";
+
+            if (exception is not null)
+            {
+                _toast = "Se perdió la conexión en tiempo real. Puedes reintentar la conexión.";
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private Task HandleCardDragStart(Guid cardId)
+    {
+        _draggedCardId = cardId;
+        _isDragging = true;
+        return Task.CompletedTask;
+    }
+
+    private Task HandleCardDragEnd()
+    {
+        _draggedCardId = null;
+        _isDragging = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleDropOnColumn(CardDropRequest request)
+    {
+        var draggedCardId = _draggedCardId;
+        _draggedCardId = null;
+        _isDragging = false;
+        StateHasChanged();
+
+        if (draggedCardId is null || _board is null)
+        {
+            return;
+        }
+
+        var card = FindCard(draggedCardId.Value);
+        if (card is null)
+        {
+            return;
+        }
+
+        var sourceColumnId = card.ColumnId;
+        ApplyLocalMove(card, sourceColumnId, request.ColumnId, request.Position);
+        StateHasChanged();
+
+        try
+        {
+            if (Hub.IsConnected)
+            {
+                // The hub persists the move and notifies other participants.
+                await Hub.MoveCardAsync(BoardId, card.Id, request.ColumnId, request.Position);
+            }
+            else
+            {
+                // REST fallback when SignalR is unavailable.
+                var board = await Api.MoveCardAsync(BoardId, card.Id, request.ColumnId, request.Position);
+                _board = board;
+            }
+        }
+        catch (Exception exception)
+        {
+            _toast = $"No se pudo mover la tarjeta: {exception.Message}";
+            await RefreshBoardSilentlyAsync();
+        }
+
+        StateHasChanged();
+    }
+
+    private CardDto? FindCard(Guid cardId)
+    {
+        return _board?.Columns
+            .SelectMany(column => column.Cards)
+            .FirstOrDefault(card => card.Id == cardId);
+    }
+
+    private void ApplyLocalMove(CardDto card, Guid sourceColumnId, Guid targetColumnId, int position)
+    {
+        if (_board is null)
+        {
+            return;
+        }
+
+        var source = _board.Columns.FirstOrDefault(column => column.Id == sourceColumnId);
+        var target = _board.Columns.FirstOrDefault(column => column.Id == targetColumnId);
+
+        if (source is null || target is null)
+        {
+            return;
+        }
+
+        source.Cards.RemoveAll(candidate => candidate.Id == card.Id);
+
+        var index = Math.Clamp(position, 0, target.Cards.Count);
+        card.ColumnId = targetColumnId;
+        target.Cards.Insert(index, card);
+
+        Renumber(source);
+
+        if (!ReferenceEquals(source, target))
+        {
+            Renumber(target);
+        }
+    }
+
+    private static void Renumber(ColumnDto column)
+    {
+        for (var index = 0; index < column.Cards.Count; index++)
+        {
+            column.Cards[index].Position = index;
+        }
+    }
+
+    private void OpenAddCard(Guid? columnId = null)
+    {
+        if (_board is null)
+        {
+            return;
+        }
+
+        _modalInitialColumnId = columnId
+            ?? _board.Columns.FirstOrDefault()?.Id
+            ?? Guid.Empty;
+        _modalError = null;
+        _modalOpen = true;
+    }
+
+    private void OpenAddCardForColumn(Guid columnId) => OpenAddCard(columnId);
+
+    private void CloseModal()
+    {
+        if (_savingCard)
+        {
+            return;
+        }
+
+        _modalOpen = false;
+        _modalError = null;
+    }
+
+    private async Task SubmitNewCardAsync(CreateCardInput input)
+    {
+        if (_savingCard)
+        {
+            return;
+        }
+
+        _savingCard = true;
+        _modalError = null;
+
+        try
+        {
+            var card = await Api.CreateCardAsync(
+                input.ColumnId,
+                input.Title.Trim(),
+                string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim());
+
+            ApplyCreatedCard(card);
+            _modalOpen = false;
+        }
+        catch (Exception exception)
+        {
+            _modalError = exception.Message;
+        }
+        finally
+        {
+            _savingCard = false;
+        }
+    }
+
+    private void ApplyCreatedCard(CardDto card)
+    {
+        if (_board is null)
+        {
+            return;
+        }
+
+        var column = _board.Columns.FirstOrDefault(candidate => candidate.Id == card.ColumnId);
+        if (column is null)
+        {
+            return;
+        }
+
+        var existing = column.Cards.FirstOrDefault(candidate => candidate.Id == card.Id);
+        if (existing is null)
+        {
+            column.Cards.Add(card);
+        }
+        else
+        {
+            existing.Title = card.Title;
+            existing.Description = card.Description;
+            existing.Position = card.Position;
+            existing.ColumnId = card.ColumnId;
+        }
+
+        column.Cards.Sort((left, right) => left.Position.CompareTo(right.Position));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Hub.BoardUpdated -= HandleBoardUpdatedAsync;
+        Hub.Reconnected -= HandleHubReconnectedAsync;
+        Hub.ConnectionClosed -= HandleHubConnectionClosed;
+
+        try
+        {
+            await Hub.LeaveBoardAsync(BoardId);
+        }
+        catch
+        {
+            // The connection may already be gone; nothing else to clean up.
+        }
+    }
+}

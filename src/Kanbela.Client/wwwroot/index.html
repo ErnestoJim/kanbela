@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="description" content="Kanbela: tablero Kanban colaborativo en tiempo real con Blazor WebAssembly y SignalR." />
+    <title>Kanbela · Kanban colaborativo</title>
+    <base href="/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="stylesheet" href="css/app.css" />
+</head>
+
+<body>
+    <div id="app">
+        <div class="boot-splash">
+            <span class="spinner"></span>
+            <p>Cargando Kanbela…</p>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        Se ha producido un error inesperado en la aplicación.
+        <a href="." class="reload">Recargar</a>
+        <button class="dismiss" onclick="document.getElementById('blazor-error-ui').style.display='none'">×</button>
+    </div>
+
+    <script src="js/dnd.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

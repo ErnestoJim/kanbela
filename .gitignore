@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+TestResults/
+
+# SQLite database created at runtime
+src/Kanbela.Api/App_Data/
+*.db
+*.db-shm
+*.db-wal

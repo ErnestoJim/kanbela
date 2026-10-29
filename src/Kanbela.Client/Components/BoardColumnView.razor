@@ -1,0 +1,146 @@
+@inject IJSRuntime JS
+
+<article class="@ColumnCssClass">
+    <header class="column-header">
+        <div class="column-title">
+            <span class="column-dot"></span>
+            <h2>@Column.Name</h2>
+        </div>
+        <span class="column-count">@Column.Cards.Count</span>
+    </header>
+
+    <div class="column-cards"
+         @ref="_dropZone"
+         @ondragenter="HandleDragEnter"
+         @ondragover="HandleDragOver"
+         @ondragover:preventDefault
+         @ondragleave="HandleDragLeave"
+         @ondrop="HandleDropAsync"
+         @ondrop:preventDefault>
+        @foreach (var card in Column.Cards)
+        {
+            <div @key="card.Id"
+                 class="kanban-card @(DraggedCardId == card.Id ? "is-dragging" : null)"
+                 draggable="true"
+                 data-card-id="@card.Id"
+                 @ondragstart="() => OnCardDragStart.InvokeAsync(card.Id)"
+                 @ondragend="() => OnCardDragEnd.InvokeAsync()">
+                <h3 class="card-title">@card.Title</h3>
+
+                @if (!string.IsNullOrWhiteSpace(card.Description))
+                {
+                    <p class="card-description">@card.Description</p>
+                }
+            </div>
+        }
+
+        @if (Column.Cards.Count == 0)
+        {
+            <div class="column-empty">
+                @(IsDragging ? "Suelta la tarjeta aquí" : "Sin tarjetas todavía")
+            </div>
+        }
+    </div>
+
+    <button class="add-card-btn" @onclick="() => OnAddCard.InvokeAsync(Column.Id)">
+        <span class="plus">+</span> Añadir tarjeta
+    </button>
+</article>
+
+@code {
+    [Parameter, EditorRequired]
+    public ColumnDto Column { get; set; } = default!;
+
+    [Parameter]
+    public Guid? DraggedCardId { get; set; }
+
+    [Parameter]
+    public bool IsDragging { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnCardDragStart { get; set; }
+
+    [Parameter]
+    public EventCallback OnCardDragEnd { get; set; }
+
+    [Parameter]
+    public EventCallback<CardDropRequest> OnDropOnColumn { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnAddCard { get; set; }
+
+    private ElementReference _dropZone;
+    private bool _isDragOver;
+
+    private string ColumnCssClass
+    {
+        get
+        {
+            var classes = "kanban-column";
+
+            if (IsDragging)
+            {
+                classes += " is-drag-active";
+            }
+
+            if (_isDragOver)
+            {
+                classes += " is-drop-target";
+            }
+
+            return classes;
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!IsDragging)
+        {
+            _isDragOver = false;
+        }
+    }
+
+    private void HandleDragEnter()
+    {
+        if (IsDragging)
+        {
+            _isDragOver = true;
+        }
+    }
+
+    private void HandleDragOver()
+    {
+        if (IsDragging)
+        {
+            _isDragOver = true;
+        }
+    }
+
+    private void HandleDragLeave()
+    {
+        _isDragOver = false;
+    }
+
+    private async Task HandleDropAsync(DragEventArgs eventArgs)
+    {
+        _isDragOver = false;
+
+        if (DraggedCardId is null)
+        {
+            return;
+        }
+
+        var position = Column.Cards.Count;
+
+        try
+        {
+            position = await JS.InvokeAsync<int>("kanbelaDnd.getDropIndex", _dropZone, eventArgs.ClientY);
+        }
+        catch (JSException)
+        {
+            // The JS helper is optional: fall back to appending at the end.
+        }
+
+        await OnDropOnColumn.InvokeAsync(new CardDropRequest(Column.Id, position));
+    }
+}

@@ -1,0 +1,54 @@
+﻿@page "/"
+@inject BoardApiClient Api
+@inject NavigationManager Navigation
+
+<PageTitle>Kanbela · Kanban colaborativo</PageTitle>
+
+@if (_error is not null)
+{
+    <section class="state-panel">
+        <span class="state-icon">!</span>
+        <h1>No se pudo conectar con la API</h1>
+        <p>@_error</p>
+        <p class="state-hint">
+            Asegúrate de que <code>Kanbela.Api</code> esté escuchando en <code>http://localhost:5080</code>.
+        </p>
+        <button class="btn btn-primary" @onclick="LoadAsync">Reintentar</button>
+    </section>
+}
+else
+{
+    <section class="state-panel">
+        <span class="spinner"></span>
+        <h1>Abriendo tu tablero…</h1>
+        <p>Buscando el tablero de demostración.</p>
+    </section>
+}
+
+@code {
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+
+        try
+        {
+            var boards = await Api.GetBoardsAsync();
+
+            if (boards.Count == 0)
+            {
+                _error = "La API no devolvió ningún tablero. Reinicia la API para volver a sembrar los datos.";
+                return;
+            }
+
+            Navigation.NavigateTo($"/board/{boards[0].Id}");
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+        }
+    }
+}
